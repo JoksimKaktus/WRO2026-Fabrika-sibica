@@ -46,12 +46,12 @@ def disable_mux():
         bus.write_byte(MUX_ADDR, 0x00)
         time.sleep(0.01)
 
-def forward(speed):
+def forward(speed):  # Go forward
     IN1_dev.off()
     IN2_dev.on()
     ENA_pwm.value = speed / 100  # 0–100 → 0–1
 
-def reverse(speed):
+def reverse(speed):  # Go in reverse
     IN1_dev.on()
     IN2_dev.off()
     ENA_pwm.value = speed / 100
@@ -60,15 +60,15 @@ def stop():
     ENA_pwm.value = 0
 
 def SetAngle(angle):
-    servo.value = angle  # maps to -1 to +1
+    servo.value = angle  # maps to -1 to +1, -1 - left, 1 -right
 
-def pressed():
+def pressed():  # detects when the button is pressed and starts the main loop
     global numPressed
     print("Button press")
     numPressed += 1
     main()
 
-def hard_reset_sensor(i):
+def hard_reset_sensor(i):  # Sometimes sensors wont start, this functions resets them
     XSHUT_PINS = [8, 7, 1, 25]
     xshuts = [DigitalOutputDevice(pin) for pin in XSHUT_PINS]
     xshuts[i].off()
@@ -77,11 +77,12 @@ def hard_reset_sensor(i):
     time.sleep(0.4)
 
 def main():
-    distFromWall = 300
-    speed = 38
-    errorLimit = 15
+    distFromWall = 300  # desired distance from the inner wall
+    speed = 38 
+    errorLimit = 15 # beyond this point the steering angle stays the same
 
     while True:
+        # read distance from sensors
         distanceLeft = sensors[0].range
         distanceFront = sensors[1].range
         distanceRight = sensors[2].range
@@ -90,16 +91,17 @@ def main():
         print(f"L:{distanceLeft} F:{distanceFront} R:{distanceRight} B:{distanceBack}")
         forward(speed)
 
-        error = (distFromWall - distanceLeft)/10
+        error = (distFromWall - distanceLeft)/10 
         print(error)
-        if(error < -errorLimit):
+        if(error < -errorLimit):  # limit the error if it exceeds the limit
             error = -errorLimit
         if(error > errorLimit):
             error = errorLimit
-        angle = (math.exp(error/10)-1)/((math.exp(error/10)+1))
+             
+        angle = (math.exp(error/10)-1)/((math.exp(error/10)+1))  # function of the turn angle
         SetAngle(angle)
         
-        if distanceBack < 52 and distanceFront < 40:
+        if distanceBack < 52 and distanceFront < 40:   # temporary code, to stop running the car
             break
     
     stop()
@@ -111,7 +113,7 @@ tca = adafruit_tca9548a.TCA9548A(i2c, address=0x70)
 order = [0, 1, 4, 2]
 sensors = [None] * 4
 
-for i, ch in enumerate(order):
+for i, ch in enumerate(order):  # initializes the sensors and resets them if necessary
     for attempt in range(3):
         try:
             sensors[i] = adafruit_vl53l0x.VL53L0X(tca[ch])
@@ -130,7 +132,7 @@ for i, ch in enumerate(order):
 # select_mux_channel_3()
 # sensor = mpu6050(MPU_ADDR)
 
-button.when_pressed = pressed  # set ONCE
+button.when_pressed = pressed
 
 while True:
     time.sleep(1) 
