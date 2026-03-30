@@ -1,11 +1,10 @@
 import time
 import board
-import busio
+import busio as busio
 import adafruit_vl53l0x
 import adafruit_tca9548a
 from smbus2 import SMBus
 from mpu6050 import mpu6050
-
 
 MUX_ADDR = 0x70
 MUX_CHANNEL_3 = 0x08
@@ -31,6 +30,8 @@ sensors=[adafruit_vl53l0x.VL53L0X(tca[0]),adafruit_vl53l0x.VL53L0X(tca[1]),adafr
 select_mux_channel_3()
 sensor = mpu6050(MPU_ADDR)
 
+avg = [-9.2,-0.3,1.2,-2.65,0.8,-1.2]
+
 try:
     while True:
         # Sensors
@@ -43,7 +44,7 @@ try:
 
         print("-------------------------------")
 
-        # Gyroscope
+        #Gyroscope
         select_mux_channel_3()
 
         accel_data = sensor.get_accel_data()
@@ -51,19 +52,17 @@ try:
         temp = sensor.get_temp()
 
         print("Accelerometer data")
-        print("x:", accel_data["x"])
-        print("y:", accel_data["y"])
-        print("z:", accel_data["z"])
+        print("x:", accel_data["x"]- avg[0])
+        print("y:", accel_data["y"]- avg[1])
+        print("z:", accel_data["z"]- avg[2])
 
         print("Gyroscope data")
-        print("x:", gyro_data["x"])
-        print("y:", gyro_data["y"])
-        print("z:", gyro_data["z"])
+        print("x:", gyro_data["x"]- avg[3])
+        print("y:", gyro_data["y"]- avg[4])
+        print("z:", gyro_data["z"]- avg[5])
 
-        print("Temp:", temp, "C")
-        print("-" * 30)
 
-        #time.sleep(0.5)
+        time.sleep(0.3)
 except KeyboardInterrupt:
     print("Exiting...")
 finally:

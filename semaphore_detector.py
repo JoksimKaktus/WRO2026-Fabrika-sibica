@@ -61,7 +61,7 @@ while True:
         # ignore tiny blobs/noise
         if area > 750 and area > max_area:
             x, y, w, h = cv2.boundingRect(c)
-            if h >= w or 1 == 1:
+            if h >= w:
                 max_area = area
                 max_attr = [x,y,w,h,(0,255,0)]
                 # cv2.rectangle(frame_rgb, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -73,7 +73,7 @@ while True:
         # ignore tiny blobs/noise
         if area > 750 and area > max_area:
             x, y, w, h = cv2.boundingRect(c)
-            if h >= w or 1 == 1:
+            if h >= w:
                 max_area = area
                 max_attr = [x,y,w,h,(0,0,255)]
                 # cv2.rectangle(frame_rgb, (x, y), (x + w, y + h), (0, 0, 255), 2)

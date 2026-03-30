@@ -1,26 +1,28 @@
 import time
-import RPi.GPIO as GPIO
-
-GPIO.setmode(GPIO.BCM)
+from gpiozero import PWMOutputDevice, DigitalOutputDevice, Servo, Device, Button
+from gpiozero.pins.lgpio import LGPIOFactory
 
 IN1 = 6
 IN2 = 5
 ENA = 13
 
-GPIO.setup([IN1, IN2, ENA], GPIO.OUT)
+Device.pin_factory = LGPIOFactory()
+IN1_dev = DigitalOutputDevice(IN1)
+IN2_dev = DigitalOutputDevice(IN2)
+ENA_pwm = PWMOutputDevice(ENA, frequency=1000)
 
-pwmEngine = GPIO.PWM(ENA, 1000)
-pwmEngine.start(0)
+def forward(speed):
+    IN1_dev.off()
+    IN2_dev.on()
+    ENA_pwm.value = speed / 100  # 0–100 → 0–1
 
-def reverse(x):
-    GPIO.output(IN1, GPIO.HIGH)
-    GPIO.output(IN2, GPIO.LOW)
-    pwmEngine.ChangeDutyCycle(x)
-
-def forward(x):
-    GPIO.output(IN1, GPIO.LOW)
-    GPIO.output(IN2, GPIO.HIGH)
-    pwmEngine.ChangeDutyCycle(x)
+def reverse(speed):
+    IN1_dev.on()
+    IN2_dev.off()
+    ENA_pwm.value = speed / 100
     
 while True:
-    forward(77)  # 0-100 
+    forward(70)  # 0-100 
+    time.sleep(1.0)
+    reverse(70)
+    time.sleep(1.0)
