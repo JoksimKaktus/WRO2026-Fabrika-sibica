@@ -15,6 +15,7 @@ from line_detector import getArea
 # =========================
 
 pressedStart = False
+lastAngle = 0
 
 Device.pin_factory = LGPIOFactory()
 
@@ -38,8 +39,9 @@ servo = AngularServo(
     SERVO_PIN,
     min_angle=-90,
     max_angle=90,
-    min_pulse_width=0.0005,
-    max_pulse_width=0.0025
+    min_pulse_width=0.0005,   # 1 ms
+    max_pulse_width=0.0025,   # 2 ms
+    frame_width=0.02    
     )
 button = Button(16, pull_up=True)
 
@@ -73,7 +75,7 @@ def disable_mux():
 def forward(speed): # speed 0-100
     IN1_dev.off()
     IN2_dev.on()
-    ENA_pwm.value = speed / 100
+    #ENA_pwm.value = speed / 100
 
 
 def reverse(speed): # speed 0-100
@@ -118,9 +120,13 @@ def cleanup():
 
 
 def SetAngle(angle): # from -1 to 1, -1 - left, 0 - straight, 1 - right
+    global lastAngle
     angle = max(angle,-40)
     angle = min(angle, 40)
+    if abs(lastAngle - angle) < 4:
+        return
     servo.angle = angle
+    lastAngle = angle
 
 
 def pressed():  # button has been pressed
@@ -156,7 +162,7 @@ def init_sensor(index, channel):
 
             sensors[index] = adafruit_vl53l0x.VL53L0X(tca[channel])
 
-            sensors[index].measurement_timing_budget = 33000
+            sensors[index].measurement_timing_budget = 20000
 
             print(f"Sensor {index} on mux channel {channel} initialized")
             return True
@@ -177,43 +183,48 @@ def read_sensor(index):
 
     channel = order[index]
 
+    # Sensor missing -> try once to recreate it
     if sensors[index] is None:
-        print(f"Sensor {index} not initialized, reinitializing...")
-        if not init_sensor(index, channel):
+        try:
+            xshuts[index].off()
+            time.sleep(0.05)
+            xshuts[index].on()
+            time.sleep(0.05)
+
+            sensors[index] = adafruit_vl53l0x.VL53L0X(tca[channel])
+            sensors[index].measurement_timing_budget = 20000
+
+        except Exception as e:
+            print(f"Sensor {index} init failed: {e}")
+            sensors[index] = None
             return -1
 
     try:
-        value = sensors[index].range
-        time.sleep(0.02)
-        return value
-
-    except OSError as e: 
-        print(f"Read failed on sensor {index}: {e}")
-
-        # recover from random I2C failure
-        try:
-            try:
-                if i2c.try_lock():
-                    i2c.unlock()
-            except:
-                pass
-
-            disable_mux()
-            time.sleep(0.05)
-
-            if init_sensor(index, channel):
-                value = sensors[index].range
-                time.sleep(0.02)
-                return value
-
-        except Exception as e2:
-            print(f"Recovery failed on sensor {index}: {e2}")
-
-        return -1
+        # Normal fast read
+        return sensors[index].range
 
     except Exception as e:
-        print(f"Unexpected sensor error on sensor {index}: {e}")
-        return -1
+        print(f"Sensor {index} read failed: {e}")
+
+        # Throw away broken object
+        sensors[index] = None
+
+        try:
+            # Quick reset and reinit
+            xshuts[index].off()
+            time.sleep(0.05)
+            xshuts[index].on()
+            time.sleep(0.05)
+
+            sensors[index] = adafruit_vl53l0x.VL53L0X(tca[channel])
+            sensors[index].measurement_timing_budget = 20000
+
+            return sensors[index].range
+
+        except Exception as e2:
+            print(f"Sensor {index} recovery failed: {e2}")
+            sensors[index] = None
+            return -1
 
 
 # =========================
@@ -282,12 +293,12 @@ def main():
         distanceRight = read_sensor(2)
         distanceBack = read_sensor(3)
 
-        #print(
-           # f"L:{distanceLeft} "
-          #  f"F:{distanceFront} "
-         #   f"R:{distanceRight} "
-        #    f"B:{distanceBack}"
-       # )
+    #     print(
+    #        f"L:{distanceLeft} "
+    #        f"F:{distanceFront} "
+    #        f"R:{distanceRight} "
+    #        f"B:{distanceBack}"
+    #    )
 
         # select_mux_channel_3()
         # gyro_data = gyro.get_gyro_data()
@@ -348,7 +359,7 @@ def main():
         
         prevError = error
         time.sleep(0.01)
-        #print(curTime - prevTime)
+        print("Time of loop: ",curTime - prevTime)
         prevTime = curTime
 
     stop()
