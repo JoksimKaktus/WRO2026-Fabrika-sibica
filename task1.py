@@ -5,7 +5,7 @@ import busio as busio
 import adafruit_vl53l0x
 import adafruit_tca9548a
 from smbus2 import SMBus
-from gpiozero import (PWMOutputDevice, DigitalOutputDevice, Servo, Device, Button)
+from gpiozero import (PWMOutputDevice, DigitalOutputDevice, AngularServo, Device, Button, Servo)
 from gpiozero.pins.lgpio import LGPIOFactory
 from mpu6050 import mpu6050
 from line_detector import getArea
@@ -34,7 +34,13 @@ XSHUT_PINS = [8, 7, 1, 25]
 IN1_dev = DigitalOutputDevice(IN1)
 IN2_dev = DigitalOutputDevice(IN2)
 ENA_pwm = PWMOutputDevice(ENA, frequency=1000)
-servo_pwm = PWMOutputDevice(SERVO_PIN, frequency=50)
+servo = AngularServo(
+    SERVO_PIN,
+    min_angle=-90,
+    max_angle=90,
+    min_pulse_width=0.0005,
+    max_pulse_width=0.0025
+    )
 button = Button(16, pull_up=True)
 
 xshuts = [DigitalOutputDevice(pin) for pin in XSHUT_PINS]
@@ -67,7 +73,7 @@ def disable_mux():
 def forward(speed): # speed 0-100
     IN1_dev.off()
     IN2_dev.on()
-    #ENA_pwm.value = speed / 100
+    ENA_pwm.value = speed / 100
 
 
 def reverse(speed): # speed 0-100
@@ -78,15 +84,43 @@ def reverse(speed): # speed 0-100
 
 def stop(): 
     ENA_pwm.value = 0
+    servo.value = 0
+    print("STOPPED")
+
+def cleanup():
+    stop()
+
+    try:
+        IN1_dev.close()
+    except:
+        pass
+    try:
+        IN2_dev.close()
+    except:
+        pass
+    try:
+        ENA_pwm.close()
+    except:
+        pass
+    try:
+        servo.close()
+    except:
+        pass
+    try:
+        button.close()
+    except:
+        pass
+    for dev in xshuts:
+        try:
+            dev.close()
+        except:
+            pass
 
 
 def SetAngle(angle): # from -1 to 1, -1 - left, 0 - straight, 1 - right
-    pulse_ms = 1.5 + (angle * 0.5)
-
-    # 50Hz = 20ms period
-    duty_cycle = pulse_ms / 20.0
-
-    servo_pwm.value = duty_cycle
+    angle = max(angle,-40)
+    angle = min(angle, 40)
+    servo.angle = angle
 
 
 def pressed():  # button has been pressed
@@ -187,36 +221,77 @@ def read_sensor(index):
 # =========================
 
 def main():
-    distFromWall = 330
-    speed = 70
-    errorLimit = 40
-    wallReverseDist = 70
-    stateChange = time.perf_counter()
-
-    # 0 - NORMAL
-    # 1 - WALL IN FRONT
-    STATE = 0
-
-    # 0 - clockwise
-    # 1 - counterclockwise
-    # 2 - didnt figure out yet 
-    direction = 2
+    speed = 30
+    slowSpeed = 30
+    distFromWall = 300
+    distFromFront = 650
+    Kp = 0.08
+    Kd = 0.4
+    prevError = 0
 
     numOfTurns = 0
-    lastLine = time.perf_counter()
     corner = False
+    lastLine = time.perf_counter()
+    line12 = 0
+    timeToStop = 6.0
+
+
+    # 0 - clockwise
+    # 1 - counter clockwise
+    # robot didnt figure out yet
+    direction = 1
+
+    # 0 - Normal, wall following
+    # 1 - Turning
+    # 2 - Go straight
+    STATE = 0
+    stateChange = time.perf_counter()
+
+    turnTime = 2.3
+    prevTime = time.perf_counter()    
 
     while True:
         curTime = time.perf_counter()
+
+        area = getArea()
+        if area > 0:
+            lastLine = curTime
+            corner = True
+        else:
+            if corner and curTime - lastLine > 1.0:
+                if STATE == 0:
+                    STATE = 1
+                    stateChange = curTime
+                corner = False
+                numOfTurns += 1
+                if(numOfTurns == 12):
+                    line12 = curTime
+                print(numOfTurns)
+
+        if numOfTurns >= 12:
+            if curTime - line12 > timeToStop:
+                break
+
+        if STATE == 2:
+            if curTime - stateChange < turnTime:
+                SetAngle(-40)
+                continue
 
         distanceLeft = read_sensor(0)
         distanceFront = read_sensor(1)
         distanceRight = read_sensor(2)
         distanceBack = read_sensor(3)
 
-        select_mux_channel_3()
-        gyro_data = gyro.get_gyro_data()
-        xRot = gyro_data["x"]+2.65   # adding average error when stationary
+        #print(
+           # f"L:{distanceLeft} "
+          #  f"F:{distanceFront} "
+         #   f"R:{distanceRight} "
+        #    f"B:{distanceBack}"
+       # )
+
+        # select_mux_channel_3()
+        # gyro_data = gyro.get_gyro_data()
+        # xRot = gyro_data["x"]+2.65   # adding average error when stationary
 
         # Skip this loop if one of the sensors failed
         if -1 in [distanceLeft, distanceFront, distanceRight, distanceBack]:
@@ -225,65 +300,56 @@ def main():
             continue
 
         if direction == 2:
-            if distanceLeft > 2000:
-                direction = 1
-            elif distanceRight > 2000:
+            if distanceRight > 2000:
                 direction = 0
-
-        # print(
-        #     f"L:{distanceLeft} "
-        #     f"F:{distanceFront} "
-        #     f"R:{distanceRight} "
-        #     f"B:{distanceBack}"
-        # )
+            elif distanceLeft > 2000:
+                direction = 1
 
         error = 0
+        if direction == 1:
+            error = -distFromWall + distanceRight
+        elif direction == 0:
+            error = distFromWall - distanceLeft
 
-        if direction == 0:
-            error = (distFromWall - distanceRight) / 20  # calculate error from the wall
-        elif direction == 1:
-            error = (distFromWall - distanceLeft) / 20  # calculate error from the wall
+        errDif = error-prevError
+        angle = Kp*error + Kd*errDif
 
-        error = (distFromWall - distanceLeft) / 20  
-
-        if error < -errorLimit:  # limiting
-            error = -errorLimit
-        if error > errorLimit:
-            error = errorLimit
-
-        angle = (math.exp(error / 18) - 1) / (math.exp(error / 18) + 1)  # func for steering
-
-        SetAngle(angle)
-
-
-        if(STATE == 0): # NORMAL
-            if distanceFront <= wallReverseDist:
-                STATE = 1
-                reverse(speed)
-                stateChange = time.perf_counter()
-            else:
-                forward(speed)
-        elif(STATE == 1): # WALL IN FRONT
-            if(curTime - stateChange > 2.0):
+        if STATE == 0:
+            #if curTime - stateChange < 3.0:
+                #dontchange
+             if distFromFront > distanceFront:
+                 STATE = 1
+                 stateChange = curTime
+        elif STATE == 1:
+            if curTime - stateChange > turnTime:
                 STATE = 0
-                forward(speed)
+                stateChange = curTime
+        elif STATE == 2:
+            STATE = 1
+            stateChange = curTime
+        
+
+
+        if STATE == 0:
+            if distanceRight > 2000:
+                SetAngle(0)
             else:
-                reverse(speed)
-
-        area = getArea()
-
-        if area > 0:
-            lastLine = curTime
-            corner = True
+                SetAngle(angle)
+        elif STATE == 1:
+            if direction == 0:
+                SetAngle(40)
+            else:
+                SetAngle(-40)
         else:
-            if corner and curTime - lastLine > 1.0:
-                corner = False
-                numOfTurns += 1
-                print(numOfTurns)
-                
+            SetAngle(0)
 
+        forward(speed)
 
+        
+        prevError = error
         time.sleep(0.01)
+        #print(curTime - prevTime)
+        prevTime = curTime
 
     stop()
     print("Stopped")
@@ -309,6 +375,7 @@ while True:
     if pressedStart:
         try:
             main()
+            break
         except KeyboardInterrupt:
             stop()
             break
