@@ -126,13 +126,12 @@ def cleanup():
 
 
 def SetAngle(angle): # from -1 to 1, -1 - left, 0 - straight, 1 - right
-    global lastAngle
-    angle = max(angle,-40)
-    angle = min(angle, 40)
+    global lastAngle, targetAngle
+    angle = max(angle,-45)
+    angle = min(angle, 45)
     if abs(lastAngle - angle) < 2:
         return
     servo.angle = angle
-    print(angle)
     lastAngle = angle
 
 
@@ -209,7 +208,7 @@ def read_sensor(index):
     try:
         # Normal fast read
         ret = sensors[index].range
-        time.sleep(0.02)
+        time.sleep(0.01)
         return ret
 
     except Exception as e:
@@ -256,8 +255,8 @@ def restart_system():
         SERVO_PIN,
         min_angle=-90,
         max_angle=90,
-        min_pulse_width=0.0005,   # 1 ms
-        max_pulse_width=0.0025,   # 2 ms
+        min_pulse_width=0.0005, 
+        max_pulse_width=0.0025,  
         frame_width=0.02    
     )
 
@@ -270,6 +269,7 @@ def restart_system():
 # =========================
 
 def main():
+
     speed = 30
     slowSpeed = 30
     distFromWall = 300
@@ -333,7 +333,7 @@ def main():
 
         if STATE == 2:
             if curTime - stateChange < turnTime:
-                SetAngle(-40)
+                SetAngle(-45)
                 continue
 
         distanceLeft = read_sensor(0)
@@ -396,9 +396,9 @@ def main():
                 SetAngle(angle)
         elif STATE == 1:
             if direction == 0:
-                SetAngle(40)
+                SetAngle(45)
             else:
-                SetAngle(-40)
+                SetAngle(-45)
         else:
             SetAngle(0)
 
@@ -407,7 +407,7 @@ def main():
         
         prevError = error
         time.sleep(0.01)
-        #print("Time of loop: ",curTime - prevTime)
+        print("Time of loop: ",curTime - prevTime)
         prevTime = curTime
 
     stop()
@@ -435,6 +435,7 @@ try:
             pressedStart = False
 
             try:
+                #threading.Thread(target=servo_worker, daemon=True).start()
                 main()
                 break
             except KeyboardInterrupt:
