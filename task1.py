@@ -273,7 +273,7 @@ def main():
     speed = 30
     slowSpeed = 30
     distFromWall = 300
-    distFromFront = 0
+    distFromFront = 650
     Kp = 0.08
     Kd = 0.4
     prevError = 0
@@ -288,25 +288,25 @@ def main():
     # 0 - clockwise
     # 1 - counter clockwise
     # robot didnt figure out yet
-    direction = 1
+    direction = 2
 
     # 0 - Normal, wall following
     # 1 - Turning
     # 2 - Go straight
-    STATE = 0
+    STATE = 2
     stateChange = time.perf_counter()
 
     turnTime = 2.3
     prevTime = time.perf_counter()    
 
     restart = False
-    restartTime = 7.0
+    restartTime = 6.0
 
 
     while True:
         curTime = time.perf_counter()
 
-        area = getArea(picam2)
+        area = getArea(picam2,direction)
         if area > 0:
             lastLine = curTime
             corner = True
@@ -331,10 +331,6 @@ def main():
             restart = False
             restart_system()
 
-        if STATE == 2:
-            if curTime - stateChange < turnTime:
-                SetAngle(-45)
-                continue
 
         distanceLeft = read_sensor(0)
         distanceFront = read_sensor(1)
@@ -374,32 +370,36 @@ def main():
         angle = Kp*error + Kd*errDif
 
         if STATE == 0:
-            #if curTime - stateChange < 3.0:
-                #dontchange
-             if distFromFront > distanceFront:
-                 STATE = 1
-                 stateChange = curTime
+            pass
         elif STATE == 1:
             if curTime - stateChange > turnTime:
                 STATE = 0
                 stateChange = curTime
         elif STATE == 2:
-            STATE = 1
-            stateChange = curTime
+            if distFromFront > distanceFront:
+                STATE = 1
+                stateChange = curTime
         
 
 
         if STATE == 0:
-            if distanceRight > 2000:
-                SetAngle(0)
+            if direction == 0:
+                if distanceLeft > 2000:
+                    SetAngle(0)
+                else:
+                    SetAngle(angle)
             else:
-                SetAngle(angle)
+                if distanceRight > 2000:
+                    SetAngle(0)
+                else:
+                    SetAngle(angle)
+
         elif STATE == 1:
             if direction == 0:
                 SetAngle(45)
             else:
                 SetAngle(-45)
-        else:
+        elif STATE == 2:
             SetAngle(0)
 
         forward(speed)
