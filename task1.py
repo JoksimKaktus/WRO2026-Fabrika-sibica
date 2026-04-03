@@ -9,6 +9,8 @@ from gpiozero import (PWMOutputDevice, DigitalOutputDevice, AngularServo, Device
 from gpiozero.pins.lgpio import LGPIOFactory
 from mpu6050 import mpu6050
 from line_detector import getArea
+from picamera2 import Picamera2
+
 
 # =========================
 # GLOBALS / SETUP
@@ -55,6 +57,10 @@ tca = adafruit_tca9548a.TCA9548A(i2c, address=MUX_ADDR)
 order = [0, 1, 4, 2]
 sensors = [None] * 4
 
+picam2 = Picamera2()
+picam2.configure(picam2.create_preview_configuration())
+picam2.start()
+
 
 # =========================
 # HELPER FUNCTIONS
@@ -75,7 +81,7 @@ def disable_mux():
 def forward(speed): # speed 0-100
     IN1_dev.off()
     IN2_dev.on()
-    #ENA_pwm.value = speed / 100
+    ENA_pwm.value = speed / 100
 
 
 def reverse(speed): # speed 0-100
@@ -123,9 +129,10 @@ def SetAngle(angle): # from -1 to 1, -1 - left, 0 - straight, 1 - right
     global lastAngle
     angle = max(angle,-40)
     angle = min(angle, 40)
-    if abs(lastAngle - angle) < 4:
+    if abs(lastAngle - angle) < 2:
         return
     servo.angle = angle
+    print(angle)
     lastAngle = angle
 
 
@@ -162,7 +169,7 @@ def init_sensor(index, channel):
 
             sensors[index] = adafruit_vl53l0x.VL53L0X(tca[channel])
 
-            sensors[index].measurement_timing_budget = 20000
+            sensors[index].measurement_timing_budget = 33000
 
             print(f"Sensor {index} on mux channel {channel} initialized")
             return True
@@ -192,7 +199,7 @@ def read_sensor(index):
             time.sleep(0.05)
 
             sensors[index] = adafruit_vl53l0x.VL53L0X(tca[channel])
-            sensors[index].measurement_timing_budget = 20000
+            sensors[index].measurement_timing_budget = 33000
 
         except Exception as e:
             print(f"Sensor {index} init failed: {e}")
@@ -201,7 +208,9 @@ def read_sensor(index):
 
     try:
         # Normal fast read
-        return sensors[index].range
+        ret = sensors[index].range
+        time.sleep(0.02)
+        return ret
 
     except Exception as e:
         print(f"Sensor {index} read failed: {e}")
@@ -217,7 +226,7 @@ def read_sensor(index):
             time.sleep(0.05)
 
             sensors[index] = adafruit_vl53l0x.VL53L0X(tca[channel])
-            sensors[index].measurement_timing_budget = 20000
+            sensors[index].measurement_timing_budget = 33000
 
             return sensors[index].range
 
@@ -225,6 +234,35 @@ def read_sensor(index):
             print(f"Sensor {index} recovery failed: {e2}")
             sensors[index] = None
             return -1
+
+def restart_system():
+    global sensors, servo, order
+
+    stop()
+    time.sleep(0.2)
+
+    # Reset sensors
+    for i, ch in enumerate(order):
+        sensors[i] = None
+        init_sensor(i, ch)
+
+    # Recreate servo object
+    try:
+        servo.close()
+    except:
+        pass
+
+    servo = AngularServo(
+        SERVO_PIN,
+        min_angle=-90,
+        max_angle=90,
+        min_pulse_width=0.0005,   # 1 ms
+        max_pulse_width=0.0025,   # 2 ms
+        frame_width=0.02    
+    )
+
+    servo.angle = 0
+    time.sleep(0.2)
 
 
 # =========================
@@ -235,7 +273,7 @@ def main():
     speed = 30
     slowSpeed = 30
     distFromWall = 300
-    distFromFront = 650
+    distFromFront = 0
     Kp = 0.08
     Kd = 0.4
     prevError = 0
@@ -261,27 +299,37 @@ def main():
     turnTime = 2.3
     prevTime = time.perf_counter()    
 
+    restart = False
+    restartTime = 7.0
+
+
     while True:
         curTime = time.perf_counter()
 
-        area = getArea()
+        area = getArea(picam2)
         if area > 0:
             lastLine = curTime
             corner = True
         else:
-            if corner and curTime - lastLine > 1.0:
+            if corner and curTime - lastLine > 0.8:
                 if STATE == 0:
                     STATE = 1
                     stateChange = curTime
                 corner = False
                 numOfTurns += 1
-                if(numOfTurns == 12):
+                if numOfTurns == 4 or numOfTurns == 8:
+                    restart = True
+                elif(numOfTurns == 12):
                     line12 = curTime
                 print(numOfTurns)
 
         if numOfTurns >= 12:
             if curTime - line12 > timeToStop:
                 break
+
+        if restart and curTime - lastLine > restartTime:
+            restart = False
+            restart_system()
 
         if STATE == 2:
             if curTime - stateChange < turnTime:
@@ -293,12 +341,12 @@ def main():
         distanceRight = read_sensor(2)
         distanceBack = read_sensor(3)
 
-    #     print(
-    #        f"L:{distanceLeft} "
-    #        f"F:{distanceFront} "
-    #        f"R:{distanceRight} "
-    #        f"B:{distanceBack}"
-    #    )
+        print(
+            f"L:{distanceLeft} "
+            f"F:{distanceFront} "
+            f"R:{distanceRight} "
+            f"B:{distanceBack}"
+        )
 
         # select_mux_channel_3()
         # gyro_data = gyro.get_gyro_data()
@@ -359,11 +407,10 @@ def main():
         
         prevError = error
         time.sleep(0.01)
-        print("Time of loop: ",curTime - prevTime)
+        #print("Time of loop: ",curTime - prevTime)
         prevTime = curTime
 
     stop()
-    print("Stopped")
 
 # =========================
 # SENSOR STARTUP
@@ -380,17 +427,27 @@ for i, ch in enumerate(order):
 button.when_pressed = pressed
 
 # wait for start
-while True:
-    time.sleep(0.1)
+try:
+    while True:
+        time.sleep(0.1)
+        
+        if pressedStart:
+            pressedStart = False
 
-    if pressedStart:
-        try:
-            main()
-            break
-        except KeyboardInterrupt:
-            stop()
-            break
-        except Exception as e:
-            print(f"Main loop crashed: {e}")
-            stop()
-            time.sleep(1)
+            try:
+                main()
+                break
+            except KeyboardInterrupt:
+                print("Keyboard interrupt")
+                break
+
+            except Exception as e:
+                print(f"Main loop crashed: {e}")
+                stop()
+                time.sleep(1)
+
+except KeyboardInterrupt:
+    print("Exiting program")
+
+finally:
+    cleanup()
