@@ -6,13 +6,16 @@ import numpy as np
 lower_blue = np.array([0, 80, 60])
 upper_blue = np.array([20, 255, 255])
 
-picam2 = Picamera2()
-picam2.configure(picam2.create_preview_configuration())
-picam2.start()
+lower_orange = np.array([110, 100, 140])
+upper_orange = np.array([115, 255, 255])
 
 
-def getArea(show_window=False):
+def getArea(picam2, color, show_window=False): # 0 - orange , (1,2) - blue
     frame = picam2.capture_array()
+
+    if frame is None or frame.size == 0:
+        return 0
+
     frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     # Only bottom half
@@ -20,7 +23,12 @@ def getArea(show_window=False):
     roi = frame_hsv[h // 2:, :]
 
     # Threshold
-    mask = cv2.inRange(roi, lower_blue, upper_blue)
+    mask = None
+
+    if color == 0:
+        mask = cv2.inRange(roi, lower_orange, upper_orange)
+    else:
+        mask = cv2.inRange(roi, lower_blue, upper_blue)
 
     # Clean noise
     kernel = np.ones((5, 5), np.uint8)
@@ -57,3 +65,10 @@ def getArea(show_window=False):
         cv2.waitKey(1)
 
     return best_area
+
+# picam2 = Picamera2()
+# picam2.configure(picam2.create_preview_configuration())
+# picam2.start()
+
+# for i in range(10000):
+#     print(getArea(picam2, 0, True))
