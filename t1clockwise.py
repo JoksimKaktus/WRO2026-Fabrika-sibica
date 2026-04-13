@@ -285,7 +285,7 @@ def main():
 
 
     speed = 70
-    distFromWall = 300
+    distFromWall = 250
     distFromFront = 650
     Kp = 0.08
     Kd = 0.4
@@ -303,7 +303,7 @@ def main():
     STATE = 0
     stateChange = time.perf_counter()
 
-    turnTime = 1.6
+    turnTime = 1.2
     prevTime = time.perf_counter()    
 
     restart = False
@@ -330,7 +330,7 @@ def main():
 
 
 
-        area = getArea(picam2,1)
+        area = getArea(picam2,0)
         if area > 0:
             lastLine = curTime
             corner = True
@@ -366,7 +366,7 @@ def main():
             continue
 
 
-        error = -distFromWall + distanceRight
+        error = distFromWall - distanceLeft
 
         errDif = error-prevError
         angle = Kp*error + Kd*errDif
@@ -380,19 +380,19 @@ def main():
 
 
         if STATE == 0:
-            if distanceRight > 2000:
+            if distanceLeft > 2000:
                 SetAngle(0)
             else:
                 SetAngle(angle)
 
         elif STATE == 1:
-            SetAngle(-45)
+            SetAngle(45)
 
         forward(speed)
 
         
         prevError = error
-        time.sleep(0.03)
+        time.sleep(0.05)
         print("Time of loop: ",curTime - prevTime)
         prevTime = curTime
 
