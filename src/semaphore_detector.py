@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 # HSV range for GREEN detection
-lower_green = np.array([45, 75, 105])
+lower_green = np.array([50, 75, 125])
 upper_green = np.array([85, 255, 255])
 
 # HSV range for RED detection
@@ -60,7 +60,7 @@ def getData(picam2):
             x, y, w, h = cv2.boundingRect(c)
 
             # Prefer roughly vertical objects
-            if h >= w:
+            if h >= w and area/(h * w)*100 < 0.6:
                 max_area = area
                 max_attr = [x,y,w,h,(0,255,0)]
 
@@ -74,7 +74,7 @@ def getData(picam2):
             x, y, w, h = cv2.boundingRect(c)
 
             # Prefer roughly vertical objects
-            if h >= w:
+            if h >= w and area/(h * w)*100 < 0.6:
                 max_area = area
                 max_attr = [x,y,w,h,(0,0,255)]
 

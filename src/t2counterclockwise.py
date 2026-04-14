@@ -1,3 +1,7 @@
+# =========================
+# IMPORTS
+# =========================
+
 import time
 import math
 import board
@@ -11,34 +15,35 @@ from gpiozero.pins.lgpio import LGPIOFactory
 from mpu6050 import mpu6050
 from line_detector import getArea
 from picamera2 import Picamera2
+from semaphore_detector import getData
 
 
 # =========================
 # GLOBALS / SETUP
 # =========================
 
-pressedStart = False       # start flag from button
-lastAngle = 0              # last servo angle (for smoothing)
-timeOffset = 0             # compensates time lost during sensor resets
+pressedStart = False       # Start button flag
+lastAngle = 0              # Last servo angle (used to avoid small jitter)
+timeOffset = 0             # Time compensation for sensor reset delays
 
 Device.pin_factory = LGPIOFactory()
 
-# Motor + servo pins
+# Motor and servo pins
 IN1 = 6
 IN2 = 5
 ENA = 13
 SERVO_PIN = 19
 
-# I2C + multiplexer
+# I2C multiplexer and MPU
 MUX_ADDR = 0x70
 MUX_CHANNEL_3 = 0x08
 I2C_BUS = 1
 MPU_ADDR = 0x68
 
-# XSHUT pins (sensor reset pins)
+# XSHUT pins for sensor reset
 XSHUT_PINS = [8, 7, 1, 25]
 
-# Motor control setup
+# Motor control
 IN1_dev = DigitalOutputDevice(IN1)
 IN2_dev = DigitalOutputDevice(IN2)
 ENA_pwm = PWMOutputDevice(ENA, frequency=1000)
@@ -53,17 +58,17 @@ servo = AngularServo(
     frame_width=0.02    
 )
 
-# Button input
+# Start button
 button = Button(16, pull_up=True)
 
-# XSHUT devices
+# Sensor reset pins
 xshuts = [DigitalOutputDevice(pin) for pin in XSHUT_PINS]
 
 # Multiplexer
 i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
 tca = adafruit_tca9548a.TCA9548A(i2c, address=MUX_ADDR)
 
-# Sensor order (index → mux channel)
+# Sensor index → mux channel mapping
 order = [0, 1, 4, 2]
 sensors = [None] * 4
 
@@ -77,77 +82,50 @@ picam2.start()
 # HELPER FUNCTIONS
 # =========================
 
-def forward(speed): # speed 0-100
-    # drive forward
+def forward(speed):
+    # Move forward
     IN1_dev.off()
     IN2_dev.on()
     ENA_pwm.value = speed / 100
 
 
-def reverse(speed): # speed 0-100
-    # drive backward
+def reverse(speed):
+    # Move backward
     IN1_dev.on()
     IN2_dev.off()
     ENA_pwm.value = speed / 100
 
 
-def stop(): 
-    # stop motor + center steering
+def stop():
+    # Stop motor and center steering
     ENA_pwm.value = 0
     servo.value = 0
     print("STOPPED")
 
-def cleanup():
-    # safely release all hardware resources
-    stop()
-
-    try:
-        IN1_dev.close()
-    except:
-        pass
-    try:
-        IN2_dev.close()
-    except:
-        pass
-    try:
-        ENA_pwm.close()
-    except:
-        pass
-    try:
-        servo.close()
-    except:
-        pass
-    try:
-        button.close()
-    except:
-        pass
-    for dev in xshuts:
-        try:
-            dev.close()
-        except:
-            pass
-
 
 def SetAngle(angle):
-    # set steering angle (-45 to 45), ignore tiny changes
+    # Set steering angle (-45 to 45) with smoothing
     global lastAngle, targetAngle
     angle = max(angle,-45)
     angle = min(angle, 45)
+
+    # Ignore small changes to reduce jitter
     if abs(lastAngle - angle) < 2:
         return
+
     servo.angle = angle
     lastAngle = angle
 
 
 def pressed():
-    # button press callback
+    # Button press callback
     global numPressed, pressedStart
     print("Button press")
     pressedStart = True
 
 
 def hard_reset_sensor(index):
-    # power cycle sensor via XSHUT pin
+    # Reset sensor using XSHUT pin
     try:
         xshuts[index].off()
         time.sleep(0.2)
@@ -158,14 +136,14 @@ def hard_reset_sensor(index):
 
 
 def init_sensor(index, channel):
-    # initialize VL53L0X sensor on given mux channel
+    # Initialize sensor on given mux channel
     global sensors
 
     for attempt in range(5):
         try:
             hard_reset_sensor(index)
 
-            # ensure I2C is free
+            # Ensure I2C is free
             try:
                 if i2c.try_lock():
                     i2c.unlock()
@@ -177,11 +155,11 @@ def init_sensor(index, channel):
             sensors[index] = adafruit_vl53l0x.VL53L0X(tca[channel])
             sensors[index].measurement_timing_budget = 33000
 
-            print(f"Sensor {index} on mux channel {channel} initialized")
+            print(f"Sensor {index} initialized")
             return True
 
         except Exception as e:
-            print(f"Init failed for sensor {index} (channel {channel}) attempt {attempt + 1}: {e}")
+            print(f"Init failed for sensor {index}: {e}")
             time.sleep(0.5)
 
     sensors[index] = None
@@ -189,7 +167,7 @@ def init_sensor(index, channel):
 
 
 def safe_read(sensor, timeout=0.10):
-    # threaded read with timeout (prevents blocking)
+    # Read sensor in separate thread to prevent blocking
     result = [None]
 
     def target():
@@ -203,33 +181,35 @@ def safe_read(sensor, timeout=0.10):
     t.start()
     t.join(timeout)
 
+    # Timeout → sensor likely froze
     if t.is_alive():
         return None
+
     return result[0]
 
 
 def read_sensor(index):
-    # robust sensor read with auto-recovery
-    global sensors,timeOffset
+    # Safe sensor read with auto-recovery
+    global sensors, timeOffset
 
     channel = order[index]
 
-    # initialize if missing
+    # Initialize if needed
     if sensors[index] is None:
         if not init_sensor(index, channel):
             return 8191
 
     value = safe_read(sensors[index])
 
-    # handle timeout (sensor freeze)
+    # Handle sensor timeout
     if value is None:
         print(f"[Sensor {index}] TIMEOUT → resetting")
         forward(0)
-        t1 = time.perf_counter()
 
+        t1 = time.perf_counter()
         sensors[index] = None
 
-        # hard reset
+        # Hard reset
         try:
             xshuts[index].off()
             time.sleep(0.4)
@@ -240,45 +220,50 @@ def read_sensor(index):
 
         time.sleep(0.5)
 
+        # Reinitialize
         if init_sensor(index, channel):
             value = safe_read(sensors[index])
             t2 = time.perf_counter()
-            timeOffset += t2-t1
+            timeOffset += t2 - t1
+
             if value is not None:
                 return value
-            else:
-                return 8191
+
+        return 8191
 
     return value
 
 
-def restart_system():
-    # full system reset (sensors + servo)
-    global sensors, servo, order
+def unpark():
+    # Initial movement to exit starting position
+    timeOfMove = 0.65
+    speed = 40
 
-    stop()
-    time.sleep(0.2)
+    STATE = 0
+    stateChange = time.perf_counter()
+    limitOfMoves = 4
 
-    for i, ch in enumerate(order):
-        sensors[i] = None
-        init_sensor(i, ch)
+    while True:
+        curTime = time.perf_counter()
 
-    try:
-        servo.close()
-    except:
-        pass
+        if curTime - stateChange > timeOfMove:
+            STATE = 1 - STATE
+            stateChange = curTime
+            limitOfMoves -= 1
 
-    servo = AngularServo(
-        SERVO_PIN,
-        min_angle=-90,
-        max_angle=90,
-        min_pulse_width=0.0005, 
-        max_pulse_width=0.0025,  
-        frame_width=0.02    
-    )
+            if limitOfMoves == 0:
+                break
 
-    servo.angle = 0
-    time.sleep(0.2)
+            stop()
+            time.sleep(1.0)
+            stateChange = time.perf_counter()
+
+        if STATE == 0:
+            forward(speed)
+            SetAngle(-45)
+        else:
+            reverse(speed)
+            SetAngle(45)
 
 
 # =========================
@@ -288,114 +273,154 @@ def restart_system():
 def main():
     global timeOffset
 
-    # control parameters
+    # Control parameters
     speed = 70
-    distFromWall = 250
+    distFromWall = 400
     distFromFront = 650
+
+    # Wall following PD
     Kp = 0.08
     Kd = 0.4
+
+    # Semaphore PD
+    Kps = 0.4
+    Kds = 0.4
+
     prevError = 0
 
+    # State machine variables
     numOfTurns = 0
     corner = False
     lastLine = time.perf_counter()
-    line12 = 0
-    timeToStop = 5.0
 
-    # state machine: 0 = normal, 1 = turning
+    # States:
+    # 0 = wall following
+    # 1 = turning
+    # 2 = approach semaphore
+    # 3 = go around semaphore
     STATE = 0
     stateChange = time.perf_counter()
 
-    turnTime = 1.2
-    prevTime = time.perf_counter()    
+    turnTime = 1.6
+    semSizeLimit = 20000
 
-    restart = False
-    restartTime = 5.0
+    # Timing for obstacle avoidance
+    semTurnTimeGreen1 = 0.80
+    semTurnTimeGreen2 = 1.00
+    semTurnTimeRed1 = 0.60
+    semTurnTimeRed2 = 1.20
+
+    semTurnColor = -1
+
+    # Start with unparking
+    unpark()
+    forward(speed)
+    SetAngle(0)
 
     while True:
         curTime = time.perf_counter() - timeOffset
 
-        # read sensors
+        # Read sensors
         distanceLeft = read_sensor(0)
         distanceFront = read_sensor(1)
         distanceRight = read_sensor(2)
-        distanceBack = 8191
 
-        print(f"L:{distanceLeft} F:{distanceFront} R:{distanceRight} B:{distanceBack}")
-
-        # line detection (camera)
-        area = getArea(picam2,0)
+        # Detect line
+        area = getArea(picam2,1)
         if area > 0:
             lastLine = curTime
             corner = True
         else:
-            if corner and curTime - lastLine > 1.1:
+            if corner and curTime - lastLine > 0.5:
                 if STATE == 0:
                     STATE = 1
                     stateChange = curTime
                 corner = False
                 numOfTurns += 1
 
-                # milestones for behavior
-                if numOfTurns == 4 or numOfTurns == 8:
-                    restart = True
-                elif(numOfTurns == 12):
-                    line12 = curTime
-
-                print(numOfTurns)
-
-        # stop condition
-        if numOfTurns >= 12:
-            if curTime - line12 > timeToStop:
-                break
-
-        # restart sensors if needed
-        if restart and curTime - lastLine > restartTime:
-            restart = False
-            restart_system()
-
-        # skip loop if sensor invalid
-        if -1 in [distanceLeft, distanceFront, distanceRight, distanceBack]:
-            print("One or more sensors unavailable, retrying...")
+        # Skip loop if sensors invalid
+        if -1 in [distanceLeft, distanceFront, distanceRight]:
             time.sleep(0.1)
             continue
 
-        # PD control
-        error = distFromWall - distanceLeft
-        errDif = error-prevError
-        angle = Kp*error + Kd*errDif
+        # Get semaphore data
+        (semColor, semCenter, semSize) = getData(picam2)
 
-        # turning state timing
-        if STATE == 1:
-            if curTime - stateChange > turnTime:
-                STATE = 0
+        # -------- STATE MACHINE --------
+        if STATE == 0:
+            if semColor != -1:
+                STATE = 2
+                stateChange = curTime
+                prevError = 0
+            elif distanceFront < distFromFront:
+                STATE = 1
                 stateChange = curTime
 
-        # steering logic
-        if STATE == 0:
-            if distanceLeft > 2000:
-                SetAngle(0)
-            else:
-                SetAngle(angle)
         elif STATE == 1:
-            SetAngle(45)
+            if semColor != -1:
+                STATE = 2
+                stateChange = curTime
+                prevError = 0
+            elif curTime - stateChange > turnTime:
+                STATE = 0
+
+        elif STATE == 2:
+            if semColor == -1:
+                STATE = 0
+            elif semSize > semSizeLimit:
+                semTurnColor = semColor
+                STATE = 3
+                stateChange = curTime
+
+        elif STATE == 3:
+            totalTurnTime = semTurnTimeRed1 + semTurnTimeRed2
+            if semTurnColor == 0:
+                totalTurnTime = semTurnTimeGreen1 + semTurnTimeGreen2
+
+            if curTime - stateChange > totalTurnTime:
+                STATE = 0
+
+        # -------- CONTROL --------
+        error = 0
+        angle = 0
+
+        if STATE == 0:
+            error = -distFromWall + distanceRight
+            angle = Kp * error + Kd * (error - prevError)
+
+        elif STATE == 2:
+            error = semCenter * 100
+            angle = Kps * error + Kds * (error - prevError)
+
+        # -------- ACTUATION --------
+        if STATE == 0:
+            SetAngle(angle if distanceRight < 2000 else 0)
+
+        elif STATE == 1:
+            SetAngle(-45)
+
+        elif STATE == 2:
+            SetAngle(angle)
+
+        elif STATE == 3:
+            if semTurnColor == 0:
+                SetAngle(-45 if curTime - stateChange < semTurnTimeGreen1 else 45)
+            else:
+                SetAngle(45 if curTime - stateChange < semTurnTimeRed1 else -45)
 
         forward(speed)
-
         prevError = error
         time.sleep(0.03)
 
-        print("Time of loop: ",curTime - prevTime)
-        prevTime = curTime
-
     stop()
-
 
 # =========================
 # SENSOR STARTUP
 # =========================
 
-# initialize sensors
+# select_mux_channel_3()
+# gyro = mpu6050(MPU_ADDR)
+
 for i, ch in enumerate(order):
     init_sensor(i, ch)
     time.sleep(0.2)
@@ -403,7 +428,7 @@ for i, ch in enumerate(order):
 # button callback
 button.when_pressed = pressed
 
-# wait for button press
+# wait for start
 try:
     while True:
         time.sleep(0.1)
@@ -412,11 +437,13 @@ try:
             pressedStart = False
 
             try:
+                #threading.Thread(target=servo_worker, daemon=True).start()
                 main()
                 break
             except KeyboardInterrupt:
                 print("Keyboard interrupt")
                 break
+
             except Exception as e:
                 print(f"Main loop crashed: {e}")
                 stop()

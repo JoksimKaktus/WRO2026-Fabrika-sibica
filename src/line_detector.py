@@ -80,6 +80,6 @@ def getArea(picam2, color, show_window=False): # 0 - orange , 1 - blue
 # picam2 = Picamera2()
 # picam2.configure(picam2.create_preview_configuration())
 # picam2.start()
-#
+
 # for i in range(10000):
 #     print(getArea(picam2, 0, True))
