@@ -83,6 +83,26 @@ Zadnju osnovu smo napravili tako da se naprijed kači na držač baterije, a da 
 Napravljene su osovine koje se na jednu stranu povezuju sa diferencijalom, a na drugu stranu sa zadnjim točkovima. One se oslanjaju na oslonce koji se kače na zadnju osnovu.
 
 
+Srategija
+
+U prvom zadatku robot ima 2 stanja.
+
+Prvo stanje je zaduženo za praćenje spoljašnjeg zida, drugo stanje je zaduženo za skretanje za 90 stepeni.
+
+Koristeći bočne senzore robot pokusava održati konstanto rastojanje između njega i spoljašnjeg zida, za stabilno kretanje koristi se PD kontroler. Ovo stanje prelazi na stanje skretanja kada detektuje plavu ili narandzastu liniju (u zavisnosti od smjera).
+
+Za skretanje za 90 stepeni koristi se određeni vremenski interval, nakon isteka vremena opet počinje sa praćenjem zida.
+
+Uz pomoć kamere detektuje se prolazak preko plavih i narandzastih linija koji pored znaka za skretanje služi i za brojanje krugova. Slika se filtrira po određenim HSV vrijednostima i uzima se samo donja polovina slike (gdje se očekuju linije).
+
+Posle svakog završenog kruga robot stane na par sekundi da resetuje sve senzore kao i servo.
+
+Moguce je da čitanje sa senzora bude neuspješno, zbog toga potrebno je čitanje sa senzora implementirati u poseban thread sa timeout-om. Ako thread ne vrati vrijednost na vrijeme, robot zastane da se taj senzor resetuje i nakon toga nastavlja gde je stao.
+
+
+U drugom zadatku robot radi isto što i u prvom sve dok ne detektuje semafor.
+
+Nakon detekcije semafora uz pomoc PD kontrolera robot se krece direktno prema njemu. Uz pomoc kamere izbroji se broj piksela koji semafor zauzima i taj broj služi kao aproksimacija blizine semafora, kada se robot primakne semaforu izvršava se naglo skretanje na lijevu ili na desnu stranu (u zavisnosti od boje semafora).
 
 Video:
 https://youtube.com/shorts/3pL9WalHYMo?si=7q0_cxRy45ui33ve
