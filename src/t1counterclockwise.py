@@ -6,7 +6,7 @@ import busio as busio
 import adafruit_vl53l0x
 import adafruit_tca9548a
 from smbus2 import SMBus
-from gpiozero import (PWMOutputDevice, DigitalOutputDevice, AngularServo, Device, Button, Servo)
+from gpiozero import (PWMOutputDevice, DigitalOutputDevice, AngularServo, Device, Button, Servo, LED)
 from gpiozero.pins.lgpio import LGPIOFactory
 from mpu6050 import mpu6050
 from line_detector import getArea
@@ -55,6 +55,9 @@ servo = AngularServo(
 
 # Start button
 button = Button(16, pull_up=True)
+
+# LED light
+led = LED(23)
 
 # XSHUT control objects
 xshuts = [DigitalOutputDevice(pin) for pin in XSHUT_PINS]
@@ -403,6 +406,13 @@ for i, ch in enumerate(order):
 
 # button callback
 button.when_pressed = pressed
+
+# Turn on LED to signal everything is ready
+led.on()
+
+time.sleep(1.0)
+
+led.off()
 
 # wait for button press to start
 try:

@@ -425,6 +425,14 @@ for i, ch in enumerate(order):
 # button callback
 button.when_pressed = pressed
 
+
+# Turn on LED to signal everything is ready
+led.on()
+
+time.sleep(1.0)
+
+led.off()
+
 # wait for start
 try:
     while True:
